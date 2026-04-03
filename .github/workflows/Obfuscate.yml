@@ -54,11 +54,12 @@ jobs:
           fi
           
           # ==============================================
-          # 【仅修改这里】手动触发时强制更新推送
+          # 【已修改：手动触发 = 100% 强制更新】
           # ==============================================
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "🖐️ 手动触发，强制更新"
+            echo "🖐️ 手动触发，最高优先级强制更新"
             echo "FORCE_UPDATE=true" >> $GITHUB_ENV
+            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
       - name: 🌐 获取远程文件信息
