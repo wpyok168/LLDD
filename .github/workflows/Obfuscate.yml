@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: "0 1 * * *"  # 🕐 每天凌晨1点自动运行
-  workflow_dispatch:      # 🖐️ 手动触发（强制推送更新至仓库）
+    - cron: "0 1 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,53 +24,40 @@ jobs:
       - name: 🔧 配置 Git 和安装依赖
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "github-actions[bot]@users.nore.github.com"
           git config --global pull.rebase false
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          
-          echo "📦 安装工具..."
           npm install -g terser javascript-obfuscator
 
       - name: 🔍 检查文件状态
         id: check_files
         run: |
-          echo "🔍 检查文件状态..."
-          
           if [[ -f "version.txt" ]]; then
             LOCAL_VERSION=$(cat version.txt)
-            echo "✅ version.txt 存在，版本: $LOCAL_VERSION"
             echo "HAS_VERSION=true" >> $GITHUB_ENV
           else
-            echo "📝 version.txt 不存在"
             echo "HAS_VERSION=false" >> $GITHUB_ENV
           fi
-          
           if [[ "$HAS_VERSION" == "false" || ! -f "source.js" || ! -f "_worker.js" ]]; then
-            echo "🔄 文件缺失，强制更新"
             echo "FORCE_UPDATE=true" >> $GITHUB_ENV
           else
             echo "FORCE_UPDATE=false" >> $GITHUB_ENV
           fi
-          
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "🖐️ 手动触发模式"
             echo "IS_MANUAL=true" >> $GITHUB_ENV
           else
             echo "IS_MANUAL=false" >> $GITHUB_ENV
           fi
 
-      - name: 🌐 获取远程文件信息
+      - name: 🌐 获取远程文件
         id: remote_info
         run: |
-          echo "🌍 下载远程文件..."
           RAW_URL="https://raw.githubusercontent.com/wpyok168/cfnew/refs/heads/main/_worker.js"
-          
           for i in {1..3}; do
             curl -f -s -o /tmp/remote_worker.js "$RAW_URL"
             FILE_SIZE=$(stat -c%s /tmp/remote_worker.js 2>/dev/null || stat -f%z /tmp/remote_worker.js 2>/dev/null)
             if [[ $FILE_SIZE -gt 1000 ]]; then
               FILE_HASH=$(sha256sum /tmp/remote_worker.js | awk '{print $1}')
-              echo "✅ 下载成功"
               echo "REMOTE_VERSION=$FILE_HASH" >> $GITHUB_ENV
               break
             fi
@@ -79,16 +66,12 @@ jobs:
           done
 
       - name: 📊 更新决策
-        id: update_decision
         run: |
           if [[ "$IS_MANUAL" == "true" || "$FORCE_UPDATE" == "true" ]]; then
-            echo "🔄 强制更新"
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           elif [[ -f "version.txt" && "$(cat version.txt)" == "$REMOTE_VERSION" ]]; then
-            echo "🎉 版本一致"
             echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
           else
-            echo "🔄 需要更新"
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
@@ -96,13 +79,7 @@ jobs:
         if: env.UPDATE_NEEDED == 'true'
         run: |
           cp /tmp/remote_worker.js source.js
-          echo "✅ source.js 已保存"
-
-          # ==============================================
-          # 🔥 手动触发：强制修改 source.js
-          # ==============================================
           if [[ "$IS_MANUAL" == "true" ]]; then
-            echo "🖐️ 手动触发：强制修改 source.js"
             echo "" >> source.js
             echo "// MANUAL FORCE UPDATE | $(date '+%Y-%m-%d %H:%M:%S')" >> source.js
           fi
@@ -110,57 +87,52 @@ jobs:
       - name: 🔧 代码混淆与压缩
         if: env.UPDATE_NEEDED == 'true'
         run: |
-          echo "🔧 压缩混淆..."
           terser /tmp/remote_worker.js --compress --mangle --output _worker.js
           [[ ! -f _worker.js ]] && cp /tmp/remote_worker.js _worker.js
-
-          # ==============================================
-          # 🔥 手动触发：强制修改 _worker.js
-          # ==============================================
           if [[ "$IS_MANUAL" == "true" ]]; then
-            echo "🖐️ 手动触发：强制修改 _worker.js"
             echo "" >> _worker.js
             echo "// MANUAL FORCE UPDATE | $(date '+%Y-%m-%d %H:%M:%S')" >> _worker.js
           fi
 
-      - name: 📝 强制提交 + 推送
+      - name: 📝 强制提交推送
         if: env.UPDATE_NEEDED == 'true'
         run: |
           echo "$REMOTE_VERSION" > version.txt
           git add -A
-          
           if [[ "$IS_MANUAL" == "true" ]]; then
-            git commit -m "🔄 FORCE UPDATE (手动触发)
-            • source.js 已强制更新
-            • _worker.js 已强制更新
-            • 版本：${REMOTE_VERSION:0:16}
-            • 时间：$(date '+%Y-%m-%d %H:%M:%S')" --allow-empty
+            git commit -m "🔄 FORCE UPDATE 手动强制更新" --allow-empty
           else
-            git commit -m "🔄 Auto Update Worker
-            • 版本：${REMOTE_VERSION:0:16}
-            • 时间：$(date '+%Y-%m-%d %H:%M:%S')" --allow-empty
+            git commit -m "🔄 Auto Update Worker" --allow-empty
           fi
-          
           git push
-          echo "✅ 全部推送完成！"
 
-      - name: 📦 打包
+      - name: 📦 打包 Release
         run: zip pages.zip _worker.js
         if: env.UPDATE_NEEDED == 'true'
 
-      - name: 🚀 发布 Releases
+      - name: 🚀 发布到 Releases
         uses: softprops/action-gh-release@v2
         if: env.UPDATE_NEEDED == 'true'
         with:
           tag_name: auto-${{ github.sha }}
           name: Worker 自动发布
-          body: "✅ 已同步最新代码\n✅ 已混淆+压缩\n📦 包含 _worker.js"
           files: pages.zip
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🎉 完成
+# ==============================================
+# 🔥 智能部署：有 CF_TOKEN 才部署，没有就跳过，绝不报错
+# ==============================================
+      - name: 🚀 部署到 Cloudflare（自动判断，无token不报错）
+        if: env.UPDATE_NEEDED == 'true' && env.CF_TOKEN_EXISTS == 'true'
+        run: |
+          npm install -g wrangler
+          wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+
+      - name: 🎉 全部完成
         if: env.UPDATE_NEEDED == 'true'
         run: echo "🎉 更新完成！"
       - name: 😴 无需更新
@@ -172,12 +144,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: update
     if: always()
-    permissions:
-      actions: write
     steps:
       - uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
           retain_days: 0
           keep_minimum_runs: 3
