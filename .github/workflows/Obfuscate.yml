@@ -1,152 +1,160 @@
-name: 🔄 Auto Update Worker
+name: Auto Update Worker
 
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: "0 1 * * *"
-  workflow_dispatch:
+    - cron: "0 1 * * *"  # 每天凌晨1点自动执行
+  workflow_dispatch:      # 允许手动触发
 
 permissions:
   contents: write
 
 jobs:
   update:
-    name: 🚀 同步和优化 Worker 文件
+    name: Update Worker
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 初始化代码仓库
+      # 检出代码
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 🔧 配置 Git 和安装依赖
+      # 配置Git环境并安装依赖工具
+      - name: Setup Git and Dependencies
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.nore.github.com"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global pull.rebase false
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           npm install -g terser javascript-obfuscator
 
-      - name: 🔍 检查文件状态
-        id: check_files
+      # 检查本地文件与触发方式
+      - name: Check File Status
         run: |
-          if [[ -f "version.txt" ]]; then
-            LOCAL_VERSION=$(cat version.txt)
+          if [ -f version.txt ]; then
             echo "HAS_VERSION=true" >> $GITHUB_ENV
           else
             echo "HAS_VERSION=false" >> $GITHUB_ENV
           fi
-          if [[ "$HAS_VERSION" == "false" || ! -f "source.js" || ! -f "_worker.js" ]]; then
+
+          if [ "$HAS_VERSION" = "false" ] || [ ! -f source.js ] || [ ! -f _worker.js ]; then
             echo "FORCE_UPDATE=true" >> $GITHUB_ENV
           else
             echo "FORCE_UPDATE=false" >> $GITHUB_ENV
           fi
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "IS_MANUAL=true" >> $GITHUB_ENV
           else
             echo "IS_MANUAL=false" >> $GITHUB_ENV
           fi
 
-      - name: 🌐 获取远程文件
-        id: remote_info
+      # 下载远程源文件
+      - name: Download Remote File
         run: |
           RAW_URL="https://raw.githubusercontent.com/wpyok168/cfnew/refs/heads/main/_worker.js"
           for i in {1..3}; do
             curl -f -s -o /tmp/remote_worker.js "$RAW_URL"
             FILE_SIZE=$(stat -c%s /tmp/remote_worker.js 2>/dev/null || stat -f%z /tmp/remote_worker.js 2>/dev/null)
-            if [[ $FILE_SIZE -gt 1000 ]]; then
+            if [ "$FILE_SIZE" -gt 1000 ]; then
               FILE_HASH=$(sha256sum /tmp/remote_worker.js | awk '{print $1}')
               echo "REMOTE_VERSION=$FILE_HASH" >> $GITHUB_ENV
               break
             fi
-            [[ $i -eq 3 ]] && exit 1
+            if [ $i -eq 3 ]; then
+              exit 1
+            fi
             sleep 3
           done
 
-      - name: 📊 更新决策
+      # 判断是否需要更新
+      - name: Determine Update
         run: |
-          if [[ "$IS_MANUAL" == "true" || "$FORCE_UPDATE" == "true" ]]; then
+          if [ "$IS_MANUAL" = "true" ] || [ "$FORCE_UPDATE" = "true" ]; then
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
-          elif [[ -f "version.txt" && "$(cat version.txt)" == "$REMOTE_VERSION" ]]; then
+          elif [ -f version.txt ] && [ "$(cat version.txt)" = "$REMOTE_VERSION" ]; then
             echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
           else
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           fi
 
-      - name: ⬇️ 保存原始文件
+      # 保存源文件，手动触发时强制修改内容
+      - name: Save Source File
         if: env.UPDATE_NEEDED == 'true'
         run: |
           cp /tmp/remote_worker.js source.js
-          if [[ "$IS_MANUAL" == "true" ]]; then
+          if [ "$IS_MANUAL" = "true" ]; then
             echo "" >> source.js
-            echo "// MANUAL FORCE UPDATE | $(date '+%Y-%m-%d %H:%M:%S')" >> source.js
+            echo "// MANUAL UPDATE $(date '+%Y-%m-%d %H:%M:%S')" >> source.js
           fi
 
-      - name: 🔧 代码混淆与压缩
+      # 压缩混淆，手动触发时强制修改输出文件
+      - name: Compress and Obfuscate
         if: env.UPDATE_NEEDED == 'true'
         run: |
-          terser /tmp/remote_worker.js --compress --mangle --output _worker.js
-          [[ ! -f _worker.js ]] && cp /tmp/remote_worker.js _worker.js
-          if [[ "$IS_MANUAL" == "true" ]]; then
+          terser /tmp/remote_worker.js --compress --mangle -o _worker.js
+          if [ ! -f _worker.js ]; then
+            cp /tmp/remote_worker.js _worker.js
+          fi
+          if [ "$IS_MANUAL" = "true" ]; then
             echo "" >> _worker.js
-            echo "// MANUAL FORCE UPDATE | $(date '+%Y-%m-%d %H:%M:%S')" >> _worker.js
+            echo "// MANUAL UPDATE $(date '+%Y-%m-%d %H:%M:%S')" >> _worker.js
           fi
 
-      - name: 📝 强制提交推送
+      # 提交并推送到仓库
+      - name: Commit and Push
         if: env.UPDATE_NEEDED == 'true'
         run: |
           echo "$REMOTE_VERSION" > version.txt
           git add -A
-          if [[ "$IS_MANUAL" == "true" ]]; then
-            git commit -m "🔄 FORCE UPDATE 手动强制更新" --allow-empty
+          if [ "$IS_MANUAL" = "true" ]; then
+            git commit -m "Force update manual" --allow-empty
           else
-            git commit -m "🔄 Auto Update Worker" --allow-empty
+            git commit -m "Auto update worker" --allow-empty
           fi
           git push
 
-      - name: 📦 打包 Release
+      # 打包zip
+      - name: Zip File
+        if: env.UPDATE_NEEDED == 'true'
         run: zip pages.zip _worker.js
-        if: env.UPDATE_NEEDED == 'true'
 
-      - name: 🚀 发布到 Releases
-        uses: softprops/action-gh-release@v2
+      # 发布到Release
+      - name: Create Release
         if: env.UPDATE_NEEDED == 'true'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: auto-${{ github.sha }}
-          name: Worker 自动发布
+          name: Auto Update
           files: pages.zip
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-# ==============================================
-# 🔥 智能部署：有 CF_TOKEN 才部署，没有就跳过，绝不报错
-# ==============================================
-      - name: 🚀 部署到 Cloudflare（自动判断，无token不报错）
-        if: env.UPDATE_NEEDED == 'true' && env.CF_TOKEN_EXISTS == 'true'
+      # 部署到Cloudflare（有token才执行，无token不报错）
+      - name: Deploy to Cloudflare
+        if: env.UPDATE_NEEDED == 'true' && env.CF_API_TOKEN != ''
         run: |
           npm install -g wrangler
           wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
 
-      - name: 🎉 全部完成
-        if: env.UPDATE_NEEDED == 'true'
-        run: echo "🎉 更新完成！"
-      - name: 😴 无需更新
-        if: env.UPDATE_NEEDED == 'false'
-        run: echo "😴 已是最新版本"
-
+  # 清理旧的运行记录
   cleanup:
-    name: 🧹 清理记录
     runs-on: ubuntu-latest
     needs: update
     if: always()
+    permissions:
+      actions: write
     steps:
-      - uses: Mattraks/delete-workflow-runs@v2
+      - name: Delete Old Runs
+        uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
           retain_days: 0
           keep_minimum_runs: 3
