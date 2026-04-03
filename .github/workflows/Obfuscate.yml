@@ -54,12 +54,13 @@ jobs:
           fi
           
           # ==============================================
-          # 【已修改：手动触发 = 100% 强制更新】
+          # 【手动触发标记】
           # ==============================================
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "🖐️ 手动触发，最高优先级强制更新"
-            echo "FORCE_UPDATE=true" >> $GITHUB_ENV
-            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
+            echo "🖐️ 手动触发模式"
+            echo "IS_MANUAL=true" >> $GITHUB_ENV
+          else
+            echo "IS_MANUAL=false" >> $GITHUB_ENV
           fi
 
       - name: 🌐 获取远程文件信息
@@ -92,8 +93,14 @@ jobs:
         run: |
           echo "📊 $(date '+%Y-%m-%d %H:%M:%S') - 版本比对和更新决策..."
           
-          if [[ "$FORCE_UPDATE" == "true" ]]; then
-            echo "🔄 文件缺失/手动触发，强制更新"
+          # ==============================================
+          # 【核心修复：手动触发强制更新】
+          # ==============================================
+          if [[ "$IS_MANUAL" == "true" ]]; then
+            echo "🖐️ 手动触发 → 强制更新，无视版本"
+            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
+          elif [[ "$FORCE_UPDATE" == "true" ]]; then
+            echo "🔄 文件缺失，强制更新"
             echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
           elif [[ -f "version.txt" ]]; then
             LOCAL_VERSION=$(cat version.txt)
@@ -152,27 +159,38 @@ jobs:
             echo "⚠️ 警告：文件超过 1MB，可能影响 Cloudflare 部署"
           fi
 
-      - name: 📝 提交更改
+      - name: 📝 强制提交更改（修复点）
         if: env.UPDATE_NEEDED == 'true'
         run: |
           echo "📝 $(date '+%Y-%m-%d %H:%M:%S') - 准备提交更改..."
           echo "$REMOTE_VERSION" > version.txt
           git add _worker.js version.txt
+          
+          # ==============================================
+          # 【手动触发：就算文件没变化也强制提交】
+          # ==============================================
+          if [[ "$IS_MANUAL" == "true" ]]; then
+            echo "🖐️ 手动触发 → 强制提交，不检查差异"
+            git commit -m "🔄 Force Update (Manual Trigger)
+            • 强制同步 Worker
+            • 版本: ${REMOTE_VERSION:0:16}
+            • 更新时间: $(date '+%Y-%m-%d %H:%M:%S')" --allow-empty
+            git push
+            echo "✅ 强制推送完成！"
+            exit 0
+          fi
+          
           if git diff --staged --quiet; then
             echo "ℹ️ 无更改，跳过提交"
             exit 0
           fi
           git commit -m "🔄 Auto Update Worker
-
           • 同步最新 Worker 文件（混淆版）
           • 版本: ${REMOTE_VERSION:0:16}...
           • 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
           git push
           echo "✅ 提交完成"
 
-# ==============================================
-# 【修复版：发布到 Releases，手动触发 100% 成功】
-# ==============================================
       - name: 📦 打包生成 pages.zip
         run: |
           zip pages.zip _worker.js
